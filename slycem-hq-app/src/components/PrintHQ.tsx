@@ -16,6 +16,7 @@ import {
   PrintOrder,
   PrintOrderRow,
 } from "@/types/PrintOrder";
+import CustomerRequests from "@/components/CustomerRequests";
 
 export default function PrintHQ() {
   const [orders, setOrders] = useState<PrintOrder[]>([]);
@@ -288,6 +289,9 @@ export default function PrintHQ() {
             <OrderDetails selectedOrder={selectedOrder} />
           </div>
         </section>
+        <section className="mt-8">
+  <CustomerRequests />
+</section>
       </div>
     </main>
   );
