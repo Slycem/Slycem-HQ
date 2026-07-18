@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 
 import { rowToCustomerOrderRequest } from "@/lib/customerOrderRequests";
+import { newPrintOrderToRow } from "@/lib/printOrders";
 import { supabase } from "@/lib/supabase";
 import {
   CustomerOrderRequest,
   CustomerOrderRequestRow,
   CustomerRequestStatus,
 } from "@/types/CustomerOrderRequest";
+import { NewPrintOrder } from "@/types/PrintOrder";
 
 const statusOptions: CustomerRequestStatus[] = [
   "Submitted",
@@ -31,11 +33,14 @@ function formatCreatedAt(date: string) {
 }
 
 export default function CustomerRequests() {
-  const [requests, setRequests] = useState<CustomerOrderRequest[]>(
-    []
-  );
+  const [requests, setRequests] = useState<CustomerOrderRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [convertingRequestId, setConvertingRequestId] = useState<
+    number | null
+  >(null);
+
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
   useEffect(() => {
     void loadRequests();
@@ -44,6 +49,7 @@ export default function CustomerRequests() {
   async function loadRequests() {
     setIsLoading(true);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const {
       data: { session },
@@ -64,9 +70,7 @@ export default function CustomerRequests() {
 
     if (error) {
       console.error("Unable to load customer requests:", error);
-      setErrorMessage(
-        "Customer requests could not be loaded."
-      );
+      setErrorMessage("Customer requests could not be loaded.");
       setIsLoading(false);
       return;
     }
@@ -84,6 +88,7 @@ export default function CustomerRequests() {
     newStatus: CustomerRequestStatus
   ) {
     setErrorMessage("");
+    setSuccessMessage("");
 
     const { data, error } = await supabase
       .from("customer_order_requests")
@@ -111,6 +116,139 @@ export default function CustomerRequests() {
     );
   }
 
+  async function convertToPrintOrder(
+    request: CustomerOrderRequest
+  ) {
+    const shouldConvert = window.confirm(
+      `Create a new print order for ${request.customerName}?`
+    );
+
+    if (!shouldConvert) {
+      return;
+    }
+
+    setConvertingRequestId(request.id);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const orderNumber = `REQ-${request.id}`;
+
+    const { data: existingOrder, error: existingOrderError } =
+      await supabase
+        .from("print_orders")
+        .select("id")
+        .eq("order_number", orderNumber)
+        .maybeSingle();
+
+    if (existingOrderError) {
+      console.error(
+        "Unable to check for an existing print order:",
+        existingOrderError
+      );
+
+      setErrorMessage(
+        "The system could not check whether this request was already converted."
+      );
+      setConvertingRequestId(null);
+      return;
+    }
+
+    if (existingOrder) {
+      setErrorMessage(
+        `Request #${request.id} has already been converted into a print order.`
+      );
+      setConvertingRequestId(null);
+      return;
+    }
+
+    const newPrintOrder: NewPrintOrder = {
+      orderNumber,
+      customerName: request.customerName,
+      phone: request.phone,
+      email: request.email,
+
+      itemName: request.itemDescription,
+      material: request.materialPreference,
+      color: request.colorPreference,
+      quantity: request.quantity,
+
+      status: "New",
+      dueDate: request.neededBy,
+
+      printHours: 0,
+      filamentGrams: 0,
+      filamentCost: 0,
+      salePrice: 0,
+      profit: 0,
+
+      notes: [
+        `Created from customer request #${request.id}.`,
+        request.preferredContact
+          ? `Preferred contact: ${request.preferredContact}.`
+          : "",
+        request.notes,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    };
+
+    const { error: createOrderError } = await supabase
+      .from("print_orders")
+      .insert(newPrintOrderToRow(newPrintOrder));
+
+    if (createOrderError) {
+      console.error(
+        "Unable to create print order:",
+        createOrderError
+      );
+
+      setErrorMessage(
+        "The print order could not be created."
+      );
+      setConvertingRequestId(null);
+      return;
+    }
+
+    const { data: updatedRequestData, error: updateRequestError } =
+      await supabase
+        .from("customer_order_requests")
+        .update({ request_status: "Approved" })
+        .eq("id", request.id)
+        .select("*")
+        .single();
+
+    if (updateRequestError) {
+      console.error(
+        "Print order was created, but request status could not be updated:",
+        updateRequestError
+      );
+
+      setErrorMessage(
+        "The print order was created, but the customer request could not be marked Approved."
+      );
+      setConvertingRequestId(null);
+      return;
+    }
+
+    const updatedRequest = rowToCustomerOrderRequest(
+      updatedRequestData as CustomerOrderRequestRow
+    );
+
+    setRequests((currentRequests) =>
+      currentRequests.map((currentRequest) =>
+        currentRequest.id === request.id
+          ? updatedRequest
+          : currentRequest
+      )
+    );
+
+    setSuccessMessage(
+      `${request.customerName}'s request was converted into print order ${orderNumber}.`
+    );
+
+    setConvertingRequestId(null);
+  }
+
   async function deleteRequest(requestId: number) {
     const shouldDelete = window.confirm(
       "Are you sure you want to delete this customer request?"
@@ -121,6 +259,7 @@ export default function CustomerRequests() {
     }
 
     setErrorMessage("");
+    setSuccessMessage("");
 
     const { error } = await supabase
       .from("customer_order_requests")
@@ -169,6 +308,12 @@ export default function CustomerRequests() {
         </button>
       </div>
 
+      {successMessage && (
+        <div className="m-6 rounded-xl border border-emerald-500/40 bg-emerald-950/40 p-4 text-emerald-200">
+          {successMessage}
+        </div>
+      )}
+
       {errorMessage && (
         <div className="m-6 rounded-xl border border-red-500/40 bg-red-950/40 p-4 text-red-200">
           {errorMessage}
@@ -185,127 +330,149 @@ export default function CustomerRequests() {
         </div>
       ) : (
         <div className="space-y-5 p-6">
-          {requests.map((request) => (
-            <article
-              key={request.id}
-              className="rounded-2xl border border-slate-800 bg-slate-950 p-5"
-            >
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Request #{request.id}
-                  </p>
+          {requests.map((request) => {
+            const isConverting =
+              convertingRequestId === request.id;
 
-                  <h3 className="mt-2 text-xl font-black text-white">
-                    {request.customerName}
-                  </h3>
+            return (
+              <article
+                key={request.id}
+                className="rounded-2xl border border-slate-800 bg-slate-950 p-5"
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Request #{request.id}
+                    </p>
 
-                  <p className="mt-1 text-sm text-slate-500">
-                    Submitted {formatCreatedAt(request.createdAt)}
-                  </p>
+                    <h3 className="mt-2 text-xl font-black text-white">
+                      {request.customerName}
+                    </h3>
+
+                    <p className="mt-1 text-sm text-slate-500">
+                      Submitted{" "}
+                      {formatCreatedAt(request.createdAt)}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void convertToPrintOrder(request)
+                      }
+                      disabled={isConverting}
+                      className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-black text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isConverting
+                        ? "Creating Order..."
+                        : "Approve & Create Print Order"}
+                    </button>
+
+                    <select
+                      value={request.requestStatus}
+                      onChange={(event) =>
+                        void updateRequestStatus(
+                          request.id,
+                          event.target
+                            .value as CustomerRequestStatus
+                        )
+                      }
+                      className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-white outline-none focus:border-cyan-400"
+                    >
+                      {statusOptions.map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void deleteRequest(request.id)
+                      }
+                      className="rounded-lg border border-red-500/40 px-3 py-2 text-sm font-bold text-red-300 transition hover:bg-red-500/10"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
-                  <select
+                <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <InfoCard
+                    label="Phone"
+                    value={request.phone || "Not provided"}
+                  />
+
+                  <InfoCard
+                    label="Email"
+                    value={request.email}
+                  />
+
+                  <InfoCard
+                    label="Preferred Contact"
+                    value={
+                      request.preferredContact ||
+                      "Not specified"
+                    }
+                  />
+
+                  <InfoCard
+                    label="Needed By"
+                    value={formatDate(request.neededBy)}
+                  />
+
+                  <InfoCard
+                    label="Quantity"
+                    value={String(request.quantity)}
+                  />
+
+                  <InfoCard
+                    label="Material"
+                    value={
+                      request.materialPreference ||
+                      "No preference"
+                    }
+                  />
+
+                  <InfoCard
+                    label="Color"
+                    value={
+                      request.colorPreference ||
+                      "No preference"
+                    }
+                  />
+
+                  <InfoCard
+                    label="Status"
                     value={request.requestStatus}
-                    onChange={(event) =>
-                      void updateRequestStatus(
-                        request.id,
-                        event.target
-                          .value as CustomerRequestStatus
-                      )
-                    }
-                    className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-white outline-none focus:border-cyan-400"
-                  >
-                    {statusOptions.map((status) => (
-                      <option key={status} value={status}>
-                        {status}
-                      </option>
-                    ))}
-                  </select>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void deleteRequest(request.id)
-                    }
-                    className="rounded-lg border border-red-500/40 px-3 py-2 text-sm font-bold text-red-300 transition hover:bg-red-500/10"
-                  >
-                    Delete
-                  </button>
+                  />
                 </div>
-              </div>
 
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <InfoCard
-                  label="Phone"
-                  value={request.phone || "Not provided"}
-                />
+                <div className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Requested Item
+                  </p>
 
-                <InfoCard
-                  label="Email"
-                  value={request.email}
-                />
+                  <p className="mt-3 whitespace-pre-wrap text-slate-200">
+                    {request.itemDescription}
+                  </p>
+                </div>
 
-                <InfoCard
-                  label="Preferred Contact"
-                  value={
-                    request.preferredContact || "Not specified"
-                  }
-                />
+                <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Additional Notes
+                  </p>
 
-                <InfoCard
-                  label="Needed By"
-                  value={formatDate(request.neededBy)}
-                />
-
-                <InfoCard
-                  label="Quantity"
-                  value={String(request.quantity)}
-                />
-
-                <InfoCard
-                  label="Material"
-                  value={
-                    request.materialPreference ||
-                    "No preference"
-                  }
-                />
-
-                <InfoCard
-                  label="Color"
-                  value={
-                    request.colorPreference || "No preference"
-                  }
-                />
-
-                <InfoCard
-                  label="Status"
-                  value={request.requestStatus}
-                />
-              </div>
-
-              <div className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-4">
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Requested Item
-                </p>
-
-                <p className="mt-3 whitespace-pre-wrap text-slate-200">
-                  {request.itemDescription}
-                </p>
-              </div>
-
-              <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Additional Notes
-                </p>
-
-                <p className="mt-3 whitespace-pre-wrap text-slate-200">
-                  {request.notes || "No additional notes."}
-                </p>
-              </div>
-            </article>
-          ))}
+                  <p className="mt-3 whitespace-pre-wrap text-slate-200">
+                    {request.notes ||
+                      "No additional notes."}
+                  </p>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
     </section>

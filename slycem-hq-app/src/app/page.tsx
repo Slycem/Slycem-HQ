@@ -3,10 +3,12 @@
 import { useState } from "react";
 import Sidebar from "../components/Sidebar";
 import PrintHQ from "../components/PrintHQ";
+import CustomerRequests from "../components/CustomerRequests";
 
 const modules = [
   { icon: "📊", title: "Dashboard", desc: "Daily command center" },
   { icon: "🖨️", title: "3D Print HQ", desc: "Orders, prints, materials" },
+  { icon: "📨", title: "Customer Requests", desc: "New quote and print requests",},
   { icon: "🎥", title: "Content HQ", desc: "TikTok, YouTube, streaming" },
   { icon: "💰", title: "Affiliate HQ", desc: "Amazon and TikTok Shop" },
   { icon: "🥬", title: "Produce HQ", desc: "Inventory and sales" },
@@ -38,8 +40,10 @@ export default function Home() {
           </h2>
 
           {activeModule === "3D Print HQ" ? (
-            <PrintHQ />
-          ) : (
+  <PrintHQ />
+) : activeModule === "Customer Requests" ? (
+  <CustomerRequests />
+) : (
             <div className="mt-10 rounded-2xl bg-slate-900 border border-slate-800 p-8">
               <h3 className="text-3xl font-bold">{activeModule}</h3>
               <p className="text-slate-400 mt-3">

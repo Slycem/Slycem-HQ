@@ -10,7 +10,7 @@ const validStatuses: OrderStatus[] = [
   "Quoted",
   "Approved",
   "Printing",
-  "Completed",
+  "Ready for Pickup",
   "Delivered",
   "Cancelled",
 ];

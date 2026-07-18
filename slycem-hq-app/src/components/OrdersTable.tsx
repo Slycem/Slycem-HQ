@@ -20,11 +20,10 @@ const statusOptions: OrderStatus[] = [
   "Quoted",
   "Approved",
   "Printing",
-  "Completed",
+  "Ready for Pickup",
   "Delivered",
   "Cancelled",
 ];
-
 function formatDate(date: string) {
   if (!date) {
     return "No due date";

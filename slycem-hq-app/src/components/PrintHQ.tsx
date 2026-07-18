@@ -16,7 +16,7 @@ import {
   PrintOrder,
   PrintOrderRow,
 } from "@/types/PrintOrder";
-import CustomerRequests from "@/components/CustomerRequests";
+import ProductionQueue from "@/components/ProductionQueue";
 
 export default function PrintHQ() {
   const [orders, setOrders] = useState<PrintOrder[]>([]);
@@ -145,9 +145,7 @@ export default function PrintHQ() {
 
     if (error) {
       console.error("Unable to delete print order:", error);
-      setErrorMessage(
-        "The order could not be deleted."
-      );
+      setErrorMessage("The order could not be deleted.");
       return;
     }
 
@@ -160,44 +158,87 @@ export default function PrintHQ() {
     );
   }
 
+  const newOrders = useMemo(
+    () => orders.filter((order) => order.status === "New"),
+    [orders]
+  );
+
+  const printingOrders = useMemo(
+    () =>
+      orders.filter((order) => order.status === "Printing"),
+    [orders]
+  );
+
+  const pickupOrders = useMemo(
+    () =>
+      orders.filter(
+        (order) => order.status === "Ready for Pickup"
+      ),
+    [orders]
+  );
+
+  const deliveredOrders = useMemo(
+    () =>
+      orders.filter((order) => order.status === "Delivered"),
+    [orders]
+  );
+
   const activeOrders = useMemo(
     () =>
       orders.filter(
         (order) =>
-          order.status !== "Completed" &&
           order.status !== "Delivered" &&
           order.status !== "Cancelled"
       ),
     [orders]
   );
 
-  const completedOrders = useMemo(
-    () =>
-      orders.filter(
-        (order) =>
-          order.status === "Completed" ||
-          order.status === "Delivered"
-      ),
-    [orders]
-  );
-
   const totalRevenue = useMemo(
     () =>
-      orders.reduce(
-        (total, order) => total + order.salePrice,
-        0
-      ),
+      orders
+        .filter((order) => order.status !== "Cancelled")
+        .reduce(
+          (total, order) => total + order.salePrice,
+          0
+        ),
     [orders]
   );
 
   const totalProfit = useMemo(
     () =>
-      orders.reduce(
-        (total, order) => total + order.profit,
-        0
-      ),
+      orders
+        .filter((order) => order.status !== "Cancelled")
+        .reduce(
+          (total, order) => total + order.profit,
+          0
+        ),
     [orders]
   );
+
+  const totalPrintHours = useMemo(
+    () =>
+      orders
+        .filter((order) => order.status !== "Cancelled")
+        .reduce(
+          (total, order) => total + order.printHours,
+          0
+        ),
+    [orders]
+  );
+
+  const totalFilamentGrams = useMemo(
+    () =>
+      orders
+        .filter((order) => order.status !== "Cancelled")
+        .reduce(
+          (total, order) => total + order.filamentGrams,
+          0
+        ),
+    [orders]
+  );
+
+  const totalFilamentKilograms =
+    totalFilamentGrams / 1000;
 
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
@@ -234,36 +275,78 @@ export default function PrintHQ() {
           </div>
         )}
 
-        <section className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-            <p className="text-slate-400">Active Orders</p>
-            <p className="mt-2 text-3xl font-black">
-              {activeOrders.length}
+        <section className="mb-8 rounded-2xl border border-slate-800 bg-slate-900 p-6">
+          <div className="mb-5">
+            <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan-400">
+              Live Overview
+            </p>
+
+            <h2 className="mt-2 text-2xl font-black">
+              Print HQ Overview
+            </h2>
+
+            <p className="mt-2 text-sm text-slate-400">
+              A live snapshot of your current print operation.
             </p>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-            <p className="text-slate-400">Completed Orders</p>
-            <p className="mt-2 text-3xl font-black">
-              {completedOrders.length}
-            </p>
-          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <MetricCard
+              label="Active Orders"
+              value={String(activeOrders.length)}
+              detail="Currently in your workflow"
+            />
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-            <p className="text-slate-400">Revenue</p>
-            <p className="mt-2 text-3xl font-black">
-              ${totalRevenue.toFixed(2)}
-            </p>
-          </div>
+            <MetricCard
+              label="New Orders"
+              value={String(newOrders.length)}
+              detail="Waiting for review"
+            />
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-            <p className="text-slate-400">Profit</p>
-            <p className="mt-2 text-3xl font-black">
-              ${totalProfit.toFixed(2)}
-            </p>
+            <MetricCard
+              label="Printing Now"
+              value={String(printingOrders.length)}
+              detail="Currently in production"
+            />
+
+            <MetricCard
+              label="Ready for Pickup"
+              value={String(pickupOrders.length)}
+              detail="Waiting for the customer"
+            />
+
+            <MetricCard
+              label="Delivered"
+              value={String(deliveredOrders.length)}
+              detail="Successfully completed"
+            />
+
+            <MetricCard
+              label="Revenue"
+              value={`$${totalRevenue.toFixed(2)}`}
+              detail="All non-cancelled orders"
+            />
+
+            <MetricCard
+              label="Profit"
+              value={`$${totalProfit.toFixed(2)}`}
+              detail="Estimated total profit"
+            />
+
+            <MetricCard
+              label="Production Usage"
+              value={`${totalPrintHours.toFixed(1)} hrs`}
+              detail={`${totalFilamentKilograms.toFixed(
+                2
+              )} kg of filament`}
+            />
           </div>
         </section>
 
+<ProductionQueue
+  orders={orders}
+  setSelectedOrder={setSelectedOrder}
+/>
         <section className="grid gap-8 xl:grid-cols-[380px_1fr]">
           <div>
             <OrderForm
@@ -286,13 +369,41 @@ export default function PrintHQ() {
               />
             )}
 
-            <OrderDetails selectedOrder={selectedOrder} />
+            <OrderDetails
+  selectedOrder={selectedOrder}
+  updateOrderStatus={updateOrderStatus}
+/>
           </div>
         </section>
-        <section className="mt-8">
-  <CustomerRequests />
-</section>
       </div>
     </main>
+  );
+}
+
+interface MetricCardProps {
+  label: string;
+  value: string;
+  detail: string;
+}
+
+function MetricCard({
+  label,
+  value,
+  detail,
+}: MetricCardProps) {
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
+      <p className="text-sm font-semibold text-slate-400">
+        {label}
+      </p>
+
+      <p className="mt-2 text-3xl font-black text-white">
+        {value}
+      </p>
+
+      <p className="mt-2 text-xs text-slate-500">
+        {detail}
+      </p>
+    </div>
   );
 }

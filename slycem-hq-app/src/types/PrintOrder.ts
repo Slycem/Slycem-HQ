@@ -3,7 +3,7 @@ export type OrderStatus =
   | "Quoted"
   | "Approved"
   | "Printing"
-  | "Completed"
+  | "Ready for Pickup"
   | "Delivered"
   | "Cancelled";
 
