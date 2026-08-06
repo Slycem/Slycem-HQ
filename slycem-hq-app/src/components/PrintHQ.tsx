@@ -2,134 +2,177 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import OrderDetails from "@/components/OrderDetails";
-import OrderForm from "@/components/OrderForm";
-import OrdersTable from "@/components/OrdersTable";
+import ProductForm from "@/components/ProductForm";
+import ProductGrid from "@/components/ProductGrid";
+import ProductImageUploader from "@/components/ProductImageUploader";
 import {
-  newPrintOrderToRow,
-  rowToPrintOrder,
-} from "@/lib/printOrders";
+  newProductToRow,
+  rowToProduct,
+} from "@/lib/products";
 import { supabase } from "@/lib/supabase";
 import {
-  NewPrintOrder,
-  OrderStatus,
-  PrintOrder,
-  PrintOrderRow,
-} from "@/types/PrintOrder";
-import ProductionQueue from "@/components/ProductionQueue";
+  NewProduct,
+  Product,
+  ProductRow,
+} from "@/types/Product";
 
-export default function PrintHQ() {
-  const [orders, setOrders] = useState<PrintOrder[]>([]);
-  const [selectedOrder, setSelectedOrder] =
-    useState<PrintOrder | null>(null);
+export default function ProductsHQ() {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [selectedProduct, setSelectedProduct] =
+    useState<Product | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    void loadOrders();
+    void loadProducts();
   }, []);
 
-  async function loadOrders() {
+  async function loadProducts() {
     setIsLoading(true);
     setErrorMessage("");
 
     const { data, error } = await supabase
-      .from("print_orders")
+      .from("products")
       .select("*")
       .order("created_at", { ascending: false });
 
     if (error) {
-      console.error("Unable to load print orders:", error);
+      console.error("Unable to load products:", error);
+
       setErrorMessage(
-        "Print HQ could not load your orders from Supabase."
+        "The Products module could not load your catalog."
       );
+
       setIsLoading(false);
       return;
     }
 
-    const loadedOrders = ((data ?? []) as PrintOrderRow[]).map(
-      rowToPrintOrder
+    const loadedProducts = ((data ?? []) as ProductRow[]).map(
+      rowToProduct
     );
 
-    setOrders(loadedOrders);
+    setProducts(loadedProducts);
     setIsLoading(false);
   }
 
-  async function addOrder(order: NewPrintOrder) {
+  async function addProduct(product: NewProduct) {
     setIsSaving(true);
     setErrorMessage("");
 
-    const row = newPrintOrderToRow(order);
+    const row = newProductToRow(product);
 
     const { data, error } = await supabase
-      .from("print_orders")
+      .from("products")
       .insert(row)
       .select("*")
       .single();
 
     if (error) {
-      console.error("Unable to add print order:", error);
+      console.error("Unable to add product:", error);
+
       setErrorMessage(
-        "The new order could not be saved. Please try again."
+        "The product could not be saved. Please try again."
       );
+
       setIsSaving(false);
       return;
     }
 
-    const savedOrder = rowToPrintOrder(data as PrintOrderRow);
+    const savedProduct = rowToProduct(data as ProductRow);
 
-    setOrders((currentOrders) => [
-      savedOrder,
-      ...currentOrders,
+    setProducts((currentProducts) => [
+      savedProduct,
+      ...currentProducts,
     ]);
 
-    setSelectedOrder(savedOrder);
+    setSelectedProduct(savedProduct);
     setIsSaving(false);
   }
 
-  async function updateOrderStatus(
-    orderId: number,
-    newStatus: OrderStatus
+  async function togglePublished(
+    productId: number,
+    isPublished: boolean
   ) {
     setErrorMessage("");
 
     const { data, error } = await supabase
-      .from("print_orders")
-      .update({ status: newStatus })
-      .eq("id", orderId)
+      .from("products")
+      .update({ is_published: isPublished })
+      .eq("id", productId)
       .select("*")
       .single();
 
     if (error) {
-      console.error("Unable to update order status:", error);
-      setErrorMessage(
-        "The order status could not be updated."
+      console.error(
+        "Unable to update product publication status:",
+        error
       );
+
+      setErrorMessage(
+        "The product publication status could not be updated."
+      );
+
       return;
     }
 
-    const updatedOrder = rowToPrintOrder(
-      data as PrintOrderRow
-    );
+    const updatedProduct = rowToProduct(data as ProductRow);
 
-    setOrders((currentOrders) =>
-      currentOrders.map((order) =>
-        order.id === orderId ? updatedOrder : order
+    setProducts((currentProducts) =>
+      currentProducts.map((product) =>
+        product.id === productId ? updatedProduct : product
       )
     );
 
-    setSelectedOrder((currentOrder) =>
-      currentOrder?.id === orderId
-        ? updatedOrder
-        : currentOrder
+    setSelectedProduct((currentProduct) =>
+      currentProduct?.id === productId
+        ? updatedProduct
+        : currentProduct
     );
   }
 
-  async function deleteOrder(orderId: number) {
+  async function updateProductImage(
+    productId: number,
+    imagePath: string
+  ) {
+    setErrorMessage("");
+
+    const { data, error } = await supabase
+      .from("products")
+      .update({ image_path: imagePath })
+      .eq("id", productId)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("Unable to update product image:", error);
+
+      setErrorMessage(
+        "The product image could not be saved."
+      );
+
+      throw error;
+    }
+
+    const updatedProduct = rowToProduct(data as ProductRow);
+
+    setProducts((currentProducts) =>
+      currentProducts.map((product) =>
+        product.id === productId ? updatedProduct : product
+      )
+    );
+
+    setSelectedProduct((currentProduct) =>
+      currentProduct?.id === productId
+        ? updatedProduct
+        : currentProduct
+    );
+  }
+
+  async function deleteProduct(productId: number) {
     const shouldDelete = window.confirm(
-      "Are you sure you want to delete this order?"
+      "Are you sure you want to delete this product?"
     );
 
     if (!shouldDelete) {
@@ -139,106 +182,56 @@ export default function PrintHQ() {
     setErrorMessage("");
 
     const { error } = await supabase
-      .from("print_orders")
+      .from("products")
       .delete()
-      .eq("id", orderId);
+      .eq("id", productId);
 
     if (error) {
-      console.error("Unable to delete print order:", error);
-      setErrorMessage("The order could not be deleted.");
+      console.error("Unable to delete product:", error);
+
+      setErrorMessage(
+        "The product could not be deleted."
+      );
+
       return;
     }
 
-    setOrders((currentOrders) =>
-      currentOrders.filter((order) => order.id !== orderId)
+    setProducts((currentProducts) =>
+      currentProducts.filter(
+        (product) => product.id !== productId
+      )
     );
 
-    setSelectedOrder((currentOrder) =>
-      currentOrder?.id === orderId ? null : currentOrder
+    setSelectedProduct((currentProduct) =>
+      currentProduct?.id === productId
+        ? null
+        : currentProduct
     );
   }
 
-  const newOrders = useMemo(
-    () => orders.filter((order) => order.status === "New"),
-    [orders]
-  );
-
-  const printingOrders = useMemo(
+  const publishedProducts = useMemo(
     () =>
-      orders.filter((order) => order.status === "Printing"),
-    [orders]
-  );
-
-  const pickupOrders = useMemo(
-    () =>
-      orders.filter(
-        (order) => order.status === "Ready for Pickup"
+      products.filter(
+        (product) => product.isPublished
       ),
-    [orders]
+    [products]
   );
 
-  const deliveredOrders = useMemo(
+  const draftProducts = useMemo(
     () =>
-      orders.filter((order) => order.status === "Delivered"),
-    [orders]
-  );
-
-  const activeOrders = useMemo(
-    () =>
-      orders.filter(
-        (order) =>
-          order.status !== "Delivered" &&
-          order.status !== "Cancelled"
+      products.filter(
+        (product) => !product.isPublished
       ),
-    [orders]
+    [products]
   );
 
-  const totalRevenue = useMemo(
+  const activeProducts = useMemo(
     () =>
-      orders
-        .filter((order) => order.status !== "Cancelled")
-        .reduce(
-          (total, order) => total + order.salePrice,
-          0
-        ),
-    [orders]
+      products.filter(
+        (product) => product.isActive
+      ),
+    [products]
   );
-
-  const totalProfit = useMemo(
-    () =>
-      orders
-        .filter((order) => order.status !== "Cancelled")
-        .reduce(
-          (total, order) => total + order.profit,
-          0
-        ),
-    [orders]
-  );
-
-  const totalPrintHours = useMemo(
-    () =>
-      orders
-        .filter((order) => order.status !== "Cancelled")
-        .reduce(
-          (total, order) => total + order.printHours,
-          0
-        ),
-    [orders]
-  );
-
-  const totalFilamentGrams = useMemo(
-    () =>
-      orders
-        .filter((order) => order.status !== "Cancelled")
-        .reduce(
-          (total, order) => total + order.filamentGrams,
-          0
-        ),
-    [orders]
-  );
-
-  const totalFilamentKilograms =
-    totalFilamentGrams / 1000;
 
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
@@ -246,26 +239,29 @@ export default function PrintHQ() {
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-sm font-bold uppercase tracking-[0.25em] text-cyan-400">
-              3D Print HQ
+              Products
             </p>
 
             <h1 className="mt-2 text-4xl font-black">
-              Print Order Command Center
+              Product Catalog Manager
             </h1>
 
-            <p className="mt-2 text-slate-400">
-              Track orders, production status, revenue, and
-              profit from one place.
+            <p className="mt-2 max-w-2xl text-slate-400">
+              Build reusable products, prepare listings, and
+              control what will appear in the customer-facing
+              catalog.
             </p>
           </div>
 
           <button
             type="button"
-            onClick={() => void loadOrders()}
+            onClick={() => void loadProducts()}
             disabled={isLoading}
             className="rounded-xl border border-slate-700 bg-slate-900 px-5 py-3 font-bold transition hover:border-cyan-400 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isLoading ? "Loading..." : "Refresh Orders"}
+            {isLoading
+              ? "Loading..."
+              : "Refresh Products"}
           </button>
         </div>
 
@@ -278,101 +274,76 @@ export default function PrintHQ() {
         <section className="mb-8 rounded-2xl border border-slate-800 bg-slate-900 p-6">
           <div className="mb-5">
             <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan-400">
-              Live Overview
+              Catalog Overview
             </p>
 
             <h2 className="mt-2 text-2xl font-black">
-              Print HQ Overview
+              Product Library
             </h2>
 
             <p className="mt-2 text-sm text-slate-400">
-              A live snapshot of your current print operation.
+              A live snapshot of your reusable products and
+              storefront readiness.
             </p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard
-              label="Active Orders"
-              value={String(activeOrders.length)}
-              detail="Currently in your workflow"
+              label="Total Products"
+              value={String(products.length)}
+              detail="All catalog products"
             />
 
             <MetricCard
-              label="New Orders"
-              value={String(newOrders.length)}
-              detail="Waiting for review"
+              label="Active Products"
+              value={String(activeProducts.length)}
+              detail="Available for use"
             />
 
             <MetricCard
-              label="Printing Now"
-              value={String(printingOrders.length)}
-              detail="Currently in production"
+              label="Published"
+              value={String(publishedProducts.length)}
+              detail="Visible to customers later"
             />
 
             <MetricCard
-              label="Ready for Pickup"
-              value={String(pickupOrders.length)}
-              detail="Waiting for the customer"
-            />
-
-            <MetricCard
-              label="Delivered"
-              value={String(deliveredOrders.length)}
-              detail="Successfully completed"
-            />
-
-            <MetricCard
-              label="Revenue"
-              value={`$${totalRevenue.toFixed(2)}`}
-              detail="All non-cancelled orders"
-            />
-
-            <MetricCard
-              label="Profit"
-              value={`$${totalProfit.toFixed(2)}`}
-              detail="Estimated total profit"
-            />
-
-            <MetricCard
-              label="Production Usage"
-              value={`${totalPrintHours.toFixed(1)} hrs`}
-              detail={`${totalFilamentKilograms.toFixed(
-                2
-              )} kg of filament`}
+              label="Drafts"
+              value={String(draftProducts.length)}
+              detail="Still being prepared"
             />
           </div>
         </section>
 
-<ProductionQueue
-  orders={orders}
-  setSelectedOrder={setSelectedOrder}
-/>
         <section className="grid gap-8 xl:grid-cols-[380px_1fr]">
           <div>
-            <OrderForm
-              addOrder={addOrder}
+            <ProductForm
+              addProduct={addProduct}
               isSaving={isSaving}
             />
           </div>
 
-          <div className="space-y-8">
+          <div>
             {isLoading ? (
               <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center text-slate-400">
-                Loading your print orders...
+                Loading your products...
               </div>
             ) : (
-              <OrdersTable
-                orders={orders}
-                setSelectedOrder={setSelectedOrder}
-                updateOrderStatus={updateOrderStatus}
-                deleteOrder={deleteOrder}
+              <ProductGrid
+                products={products}
+                setSelectedProduct={setSelectedProduct}
+                togglePublished={togglePublished}
+                deleteProduct={deleteProduct}
               />
             )}
 
-            <OrderDetails
-  selectedOrder={selectedOrder}
-  updateOrderStatus={updateOrderStatus}
-/>
+            {selectedProduct && (
+              <div className="mt-8">
+                <ProductImageUploader
+                  product={selectedProduct}
+                  updateProductImage={updateProductImage}
+                />
+              </div>
+            )}
           </div>
         </section>
       </div>

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import ProductForm from "@/components/ProductForm";
 import ProductGrid from "@/components/ProductGrid";
+import ProductImageUploader from "@/components/ProductImageUploader";
 import {
   newProductToRow,
   rowToProduct,
@@ -14,6 +15,7 @@ import {
   Product,
   ProductRow,
 } from "@/types/Product";
+import ProductFileUploader from "@/components/ProductFileUploader";
 
 export default function ProductsHQ() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -114,6 +116,44 @@ export default function ProductsHQ() {
       );
 
       return;
+    }
+
+    const updatedProduct = rowToProduct(data as ProductRow);
+
+    setProducts((currentProducts) =>
+      currentProducts.map((product) =>
+        product.id === productId ? updatedProduct : product
+      )
+    );
+
+    setSelectedProduct((currentProduct) =>
+      currentProduct?.id === productId
+        ? updatedProduct
+        : currentProduct
+    );
+  }
+
+  async function updateProductImage(
+    productId: number,
+    imagePath: string
+  ) {
+    setErrorMessage("");
+
+    const { data, error } = await supabase
+      .from("products")
+      .update({ image_path: imagePath })
+      .eq("id", productId)
+      .select("*")
+      .single();
+
+    if (error) {
+      console.error("Unable to update product image:", error);
+
+      setErrorMessage(
+        "The product image could not be saved."
+      );
+
+      throw error;
     }
 
     const updatedProduct = rowToProduct(data as ProductRow);
@@ -298,20 +338,11 @@ export default function ProductsHQ() {
             )}
 
             {selectedProduct && (
-              <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-900 p-6">
-                <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan-400">
-                  Selected Product
-                </p>
-
-                <h2 className="mt-2 text-2xl font-black text-white">
-                  {selectedProduct.name}
-                </h2>
-
-                <p className="mt-2 text-slate-400">
-                  The full product workspace, photo uploads,
-                  file attachments, and editing tools will be
-                  added next.
-                </p>
+              <div className="mt-8">
+                <ProductImageUploader
+                  product={selectedProduct}
+                  updateProductImage={updateProductImage}
+                />
               </div>
             )}
           </div>
