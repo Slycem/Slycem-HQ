@@ -19,8 +19,8 @@ export const navigationItems: NavigationItem[] = [
     icon: "🖨️",
   },
   {
-    title: "Products",
-    description: "Catalog and product files",
+    title: "Catalog",
+    description: "Products, pricing, images, and print files",
     href: "/products",
     icon: "📦",
   },
