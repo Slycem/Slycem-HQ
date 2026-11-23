@@ -16,6 +16,7 @@ type Job = {
   status: string;
   worker: string | null;
   result: string | null;
+  ai_images?: { path: string } | { path: string }[] | null;
 };
 
 const field = "w-full rounded-lg border border-slate-600 bg-slate-950 p-3 text-white";
@@ -55,7 +56,7 @@ export default function AiTasks() {
         if (membership.error) setMessage("Could not check your invitation. Please try again.");
         return;
       }
-      const response = await client.from("ai_jobs").select("id,task,status,worker,result")
+      const response = await client.from("ai_jobs").select("id,task,status,worker,result,ai_images(path)")
         .order("created_at", { ascending: false }).limit(30);
       if (active) {
         setJobs(response.data ?? []);
@@ -140,6 +141,7 @@ export default function AiTasks() {
           <>
             <form className="space-y-4" onSubmit={submit}>
               <label className="block">What should HQ work on?<textarea className={field} name="task" rows={4} minLength={3} maxLength={12000} required /></label>
+              <p className="text-sm text-slate-300">For a new image, start with “Create an image of…” and describe what you want.</p>
               <label className="block">Pictures or videos<input className={field} type="file" name="media" accept="image/*,video/*" multiple /></label>
               <p className="text-sm text-slate-300">HQ reads pictures and samples four frames per video. Video audio is unavailable.</p>
               <label className="block">Public links (up to three, one per line)<textarea className={field} name="links" rows={2} /></label>
@@ -157,6 +159,7 @@ export default function AiTasks() {
                 <p className="break-words font-semibold">{job.task}</p>
                 <p className="text-sm text-slate-300">{job.worker ? job.worker + " · " : ""}{job.status}</p>
                 {job.result && <p className="whitespace-pre-wrap break-words">{job.result}</p>}
+                {job.ai_images && <ImageResult image={job.ai_images} />}
               </article>)}
             </section>
           </>
@@ -164,5 +167,42 @@ export default function AiTasks() {
         <p role="status" className="text-cyan-200">{message}</p>
       </div>
     </main>
+  );
+}
+
+function ImageResult({ image }: { image: NonNullable<Job["ai_images"]> }) {
+  const path = Array.isArray(image) ? image[0]?.path : image.path;
+  const [imageUrl, setImageUrl] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
+
+  if (!path || !db) return null;
+  if (imageUrl) return (
+    <figure className="space-y-2">
+      {/* The browser owns this private blob URL. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img className="rounded-lg" src={imageUrl} alt="AI-generated result" />
+      <a className="underline" href={imageUrl} download="slycem-hq-image.png">Download image</a>
+    </figure>
+  );
+  return (
+    <>
+      <button className={button} disabled={loading} onClick={async () => {
+        if (!db || loading) return;
+        setLoading(true);
+        setError("");
+        try {
+          const response = await db.storage.from("ai-task-images").download(path);
+          if (response.error) throw response.error;
+          setImageUrl(URL.createObjectURL(response.data));
+        } catch {
+          setError("Could not open this image. Try again.");
+        } finally {
+          setLoading(false);
+        }
+      }}>{loading ? "Loading image…" : "View generated image"}</button>
+      {error && <p role="status">{error}</p>}
+    </>
   );
 }
