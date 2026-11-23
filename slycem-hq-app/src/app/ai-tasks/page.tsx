@@ -70,15 +70,13 @@ export default function AiTasks() {
   async function signIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!db) return;
-    const email = String(new FormData(event.currentTarget).get("email")).trim();
+    const fields = new FormData(event.currentTarget);
+    const email = String(fields.get("email")).trim();
+    const password = String(fields.get("password"));
     setBusy(true);
-    const response = await db.auth.signInWithOtp({
-      email, options: { shouldCreateUser: false, emailRedirectTo: window.location.origin + "/ai-tasks" },
-    });
+    const response = await db.auth.signInWithPassword({ email, password });
     setBusy(false);
-    setMessage(response.error
-      ? "Could not send a sign-in link. Check your invitation or try again in a moment."
-      : "Check your email for a sign-in link.");
+    setMessage(response.error ? "Sign-in failed. Check your email and password." : "");
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -133,7 +131,8 @@ export default function AiTasks() {
           <form className="space-y-3" onSubmit={signIn}>
             <p>Sign in with the email address on your invitation.</p>
             <label className="block">Email<input className={field} name="email" type="email" autoComplete="email" required /></label>
-            <button className={button} disabled={busy}>Email me a sign-in link</button>
+            <label className="block">Password<input className={field} name="password" type="password" autoComplete="current-password" required /></label>
+            <button className={button} disabled={busy}>Sign in</button>
           </form>
         )}
         {user && (!accessChecked ? <p>Checking your invitation…</p> : !member && <p>An AI Tasks invitation is required.</p>)}
