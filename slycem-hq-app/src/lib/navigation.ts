@@ -13,6 +13,12 @@ export const navigationItems: NavigationItem[] = [
     icon: "🏠",
   },
   {
+    title: "AI Tasks",
+    description: "Submit requests and view your results",
+    href: "/ai-tasks",
+    icon: "✦",
+  },
+  {
     title: "Print HQ",
     description: "Orders and production",
     href: "/print-hq",
