@@ -1,8 +1,9 @@
 "use client";
 
 import { createClient } from "@supabase/supabase-js";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { preparePictures } from "./media.js";
+import { useVoice } from "./voice";
 
 const url = process.env.NEXT_PUBLIC_AI_TASKS_SUPABASE_URL;
 const key = process.env.NEXT_PUBLIC_AI_TASKS_SUPABASE_KEY;
@@ -30,6 +31,13 @@ export default function AiTasks() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [taskText, setTaskText] = useState("");
+  const [replyTo, setReplyTo] = useState<Job | null>(null);
+  const composer = useRef<HTMLTextAreaElement | null>(null);
+  const voice = useVoice(
+    (text) => setTaskText((current) => (current.trim() ? current.trimEnd() + " " + text : text).slice(0, 12000)),
+    setMessage,
+  );
   const accessChecked = user !== null && access?.user === user;
   const member = accessChecked && access?.allowed === true;
 
@@ -83,7 +91,7 @@ export default function AiTasks() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!db || !member || busy) return;
+    if (!db || !member || busy || voice.listening) return;
     const form = event.currentTarget;
     const fields = new FormData(form);
     const task = String(fields.get("task")).trim();
@@ -97,9 +105,12 @@ export default function AiTasks() {
     setMessage(files.length ? "Preparing media…" : "Submitting task…");
     try {
       const pictures = await preparePictures(files);
-      const response = await db.rpc("ai_submit", {
+      const payload = {
         p_task: task, p_category: String(fields.get("category")), p_sources: { links, pictures },
-      });
+      };
+      const response = replyTo
+        ? await db.rpc("ai_reply", { ...payload, p_parent: replyTo.id })
+        : await db.rpc("ai_submit", payload);
       if (response.error) {
         setMessage(response.error.code === "22023" ? response.error.message : "Unable to queue the task.");
         return;
@@ -108,6 +119,8 @@ export default function AiTasks() {
         { id: response.data, task, status: "queued", worker: null, result: null }, ...current,
       ]);
       form.reset();
+      setTaskText("");
+      setReplyTo(null);
       setMessage("Task queued.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to read the attachments.");
@@ -122,11 +135,13 @@ export default function AiTasks() {
         <header className="flex items-center justify-between gap-4">
           <h1 className="text-3xl font-bold">SLYCEM HQ · AI Tasks</h1>
           {user && <button className="underline" onClick={async () => {
+            voice.cancelVoice();
             const response = await db?.auth.signOut();
             if (response?.error) { setMessage("Could not sign out. Please try again."); return; }
-            setJobs([]); setAccess(null); setMessage("");
+            setJobs([]); setAccess(null); setMessage(""); setTaskText(""); setReplyTo(null);
           }}>Sign out</button>}
         </header>
+        <p role="status" className="text-cyan-200">{message}</p>
         {!db && <p>AI Tasks is being set up.</p>}
         {db && !ready && <p>Checking sign-in…</p>}
         {db && ready && !user && (
@@ -140,18 +155,34 @@ export default function AiTasks() {
         {user && (!accessChecked ? <p>Checking your invitation…</p> : !member && <p>An AI Tasks invitation is required.</p>)}
         {user && member && (
           <>
-            <form className="space-y-4" onSubmit={submit}>
-              <label className="block">What should HQ work on?<textarea className={field} name="task" rows={4} minLength={3} maxLength={12000} required /></label>
-              <p className="text-sm text-slate-300">Start with “Create an image of…” or “Create a video of…” to generate media. Videos are short and silent.</p>
-              <label className="block">Pictures or videos<input className={field} type="file" name="media" accept="image/*,video/*" multiple /></label>
-              <p className="text-sm text-slate-300">HQ reads pictures and samples four frames per video. Video audio is unavailable.</p>
-              <label className="block">Public links (up to three, one per line)<textarea className={field} name="links" rows={2} /></label>
-              <label className="block">Inbox<select className={field} name="category">
-                <option value="auto">Choose automatically</option>
-                <option value="content">Content</option><option value="business">Business</option>
-                <option value="education">Education</option><option value="personal">Personal</option>
-              </select></label>
-              <button className={button} disabled={busy}>Submit task</button>
+            <form className="space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-4 sm:p-6" onSubmit={submit}>
+              {replyTo && <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-800 p-3">
+                <p className="min-w-0 truncate">Replying to: {replyTo.task}</p>
+                <button type="button" className="min-h-11 shrink-0 px-2 underline" onClick={() => setReplyTo(null)}>Cancel reply</button>
+              </div>}
+              <button type="button" aria-pressed={voice.listening} aria-describedby="voice-note"
+                className={button + " min-h-16 w-full text-xl"} onClick={voice.toggleTalk} disabled={busy}>
+                {voice.listening ? "Done talking" : "Talk to HQ"}
+              </button>
+              <p id="voice-note" className="text-sm text-slate-300">Your device or browser turns speech into text. Tap Send when the message looks right.</p>
+              {voice.preview && <p className="rounded-lg bg-slate-800 p-3">{voice.preview}</p>}
+              <label className="block text-base">Your message
+                <textarea ref={composer} className={field} name="task" rows={3} minLength={3} maxLength={12000}
+                  value={taskText} onChange={(event) => setTaskText(event.target.value)} required />
+              </label>
+              <button className={button + " min-h-12 w-full"} disabled={busy || voice.listening}>Send</button>
+              <details className="space-y-3">
+                <summary className="min-h-11 cursor-pointer py-2 text-slate-200">Attachments and inbox</summary>
+                <p className="text-sm text-slate-300">Start with “Create an image of…” or “Create a video of…” to generate media. Videos are short and silent.</p>
+                <label className="block">Pictures or videos<input className={field} type="file" name="media" accept="image/*,video/*" multiple /></label>
+                <p className="text-sm text-slate-300">HQ reads pictures and samples four frames per video. Video audio is unavailable.</p>
+                <label className="block">Public links (up to three, one per line)<textarea className={field} name="links" rows={2} /></label>
+                <label className="block">Inbox<select className={field} name="category" defaultValue="auto">
+                  <option value="auto">Choose automatically</option>
+                  <option value="content">Content</option><option value="business">Business</option>
+                  <option value="education">Education</option><option value="personal">Personal</option>
+                </select></label>
+              </details>
             </form>
             <section className="space-y-3">
               <h2 className="text-xl font-semibold">Your jobs</h2>
@@ -160,13 +191,21 @@ export default function AiTasks() {
                 <p className="break-words font-semibold">{job.task}</p>
                 <p className="text-sm text-slate-300">{job.worker ? job.worker + " · " : ""}{job.status}</p>
                 {job.result && <p className="whitespace-pre-wrap break-words">{job.result}</p>}
+                {job.status === "completed" && job.result && <div className="flex flex-wrap gap-2">
+                  <button type="button" className={button + " min-h-11"} onClick={() => voice.toggleSpeak(job.result!)}>
+                    {voice.speaking ? "Stop reading" : "Read aloud"}
+                  </button>
+                  <button type="button" className="min-h-11 px-3 underline" onClick={() => {
+                    setReplyTo(job);
+                    composer.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+                  }}>Reply</button>
+                </div>}
                 {job.ai_images && <MediaResult artifact={job.ai_images} kind="image" />}
                 {job.ai_videos && <MediaResult artifact={job.ai_videos} kind="video" />}
               </article>)}
             </section>
           </>
         )}
-        <p role="status" className="text-cyan-200">{message}</p>
       </div>
     </main>
   );
