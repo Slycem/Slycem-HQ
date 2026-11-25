@@ -26,8 +26,22 @@ export function useVoice(
 ) {
   const active = useRef<Recognition | null>(null);
   const [listening, setListening] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const [speaking, setSpeaking] = useState<string | null>(null);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [preview, setPreview] = useState("");
+
+  useEffect(() => {
+    const synthesis = window.speechSynthesis;
+    if (!synthesis) return;
+    const refresh = () => setVoices(synthesis.getVoices());
+    const timer = window.setTimeout(refresh, 0);
+    synthesis.addEventListener("voiceschanged", refresh);
+    return () => {
+      window.clearTimeout(timer);
+      synthesis.removeEventListener("voiceschanged", refresh);
+    };
+  }, []);
 
   useEffect(() => () => {
     const recognition = active.current;
@@ -52,8 +66,7 @@ export function useVoice(
     }
     setListening(false);
     setPreview("");
-    window.speechSynthesis?.cancel();
-    setSpeaking(false);
+    stopSpeaking();
   }
 
   function toggleTalk() {
@@ -67,8 +80,7 @@ export function useVoice(
       onStatus("Use the microphone on your keyboard to dictate in the message box.");
       return;
     }
-    window.speechSynthesis?.cancel();
-    setSpeaking(false);
+    stopSpeaking();
     const recognition = new Engine();
     recognition.lang = navigator.language || "en-US";
     recognition.interimResults = true;
@@ -107,23 +119,33 @@ export function useVoice(
     }
   }
 
-  function toggleSpeak(text: string) {
+  function stopSpeaking() {
+    utteranceRef.current = null;
+    window.speechSynthesis?.cancel();
+    setSpeaking(null);
+  }
+
+  function speak(id: string, text: string, voiceId: string) {
     if (!("speechSynthesis" in window)) {
       onStatus("This browser cannot read replies aloud.");
       return;
     }
-    if (speaking) {
-      window.speechSynthesis.cancel();
-      setSpeaking(false);
-      return;
-    }
+    stopSpeaking();
     const plain = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[\x60*_#]/g, "");
     const utterance = new SpeechSynthesisUtterance(plain);
+    const selected = window.speechSynthesis.getVoices().find((option) => option.voiceURI === voiceId);
+    if (selected) utterance.voice = selected;
     utterance.rate = 0.95;
-    utterance.onend = utterance.onerror = () => setSpeaking(false);
-    setSpeaking(true);
+    utterance.onend = utterance.onerror = () => {
+      if (utteranceRef.current === utterance) {
+        utteranceRef.current = null;
+        setSpeaking(null);
+      }
+    };
+    utteranceRef.current = utterance;
+    setSpeaking(id);
     window.speechSynthesis.speak(utterance);
   }
 
-  return { listening, speaking, preview, toggleTalk, toggleSpeak, cancelVoice };
+  return { listening, speaking, preview, toggleTalk, speak, stopSpeaking, cancelVoice, voices };
 }

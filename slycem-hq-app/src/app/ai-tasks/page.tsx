@@ -13,6 +13,7 @@ const db = url && key?.startsWith("sb_publishable_")
 
 type Job = {
   id: string;
+  parent_id: string | null;
   task: string;
   status: string;
   worker: string | null;
@@ -23,6 +24,8 @@ type Job = {
 
 const field = "w-full rounded-lg border border-slate-600 bg-slate-950 p-3 text-white";
 const button = "rounded-lg bg-cyan-300 px-4 py-2 font-semibold text-slate-950 disabled:opacity-60";
+const voicePreference = "slycem-hq-voice";
+const autoplayPreference = "slycem-hq-autoplay";
 
 export default function AiTasks() {
   const [user, setUser] = useState<string | null>(null);
@@ -32,7 +35,10 @@ export default function AiTasks() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [taskText, setTaskText] = useState("");
-  const [replyTo, setReplyTo] = useState<Job | null>(null);
+  const [latestId, setLatestId] = useState<string | null | undefined>(undefined);
+  const [voiceId, setVoiceId] = useState("");
+  const [autoplay, setAutoplay] = useState(false);
+  const submitted = useRef<string | null>(null);
   const composer = useRef<HTMLTextAreaElement | null>(null);
   const voice = useVoice(
     (text) => setTaskText((current) => (current.trim() ? current.trimEnd() + " " + text : text).slice(0, 12000)),
@@ -40,6 +46,34 @@ export default function AiTasks() {
   );
   const accessChecked = user !== null && access?.user === user;
   const member = accessChecked && access?.allowed === true;
+  const latest = latestId === undefined ? jobs[0] : jobs.find((job) => job.id === latestId);
+  const thread: Job[] = [];
+  const visited = new Set<string>();
+  for (let job = latest; job && !visited.has(job.id); job = jobs.find((item) => item.id === job?.parent_id)) {
+    visited.add(job.id);
+    thread.unshift(job);
+  }
+  const working = latest?.status === "queued" || latest?.status === "running";
+  const replyTo = [...thread].reverse().find((job) => job.status === "completed" && job.result);
+  const { speak, listening } = voice;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        setVoiceId(localStorage.getItem(voicePreference) ?? "");
+        setAutoplay(localStorage.getItem(autoplayPreference) === "true");
+      } catch {}
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!latest || submitted.current !== latest.id || working || listening) return;
+    submitted.current = null;
+    if (autoplay && latest.status === "completed" && latest.result) {
+      speak(latest.id, latest.result, voiceId);
+    }
+  }, [latest, working, listening, autoplay, speak, voiceId]);
 
   useEffect(() => {
     if (!db) return;
@@ -65,10 +99,16 @@ export default function AiTasks() {
         if (membership.error) setMessage("Could not check your invitation. Please try again.");
         return;
       }
-      const response = await client.from("ai_jobs").select("id,task,status,worker,result,ai_images(path),ai_videos(path)")
+      const response = await client.from("ai_jobs").select("id,parent_id,task,status,worker,result,ai_images(path),ai_videos(path)")
         .order("created_at", { ascending: false }).limit(30);
       if (active) {
-        setJobs(response.data ?? []);
+        if (!response.error) {
+          const fresh = response.data ?? [];
+          setJobs((current) => {
+            const pending = current.find((job) => job.id === submitted.current);
+            return pending && !fresh.some((job) => job.id === pending.id) ? [pending, ...fresh] : fresh;
+          });
+        }
         setAccess({ user: userId, allowed: true });
       }
     }
@@ -91,7 +131,7 @@ export default function AiTasks() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!db || !member || busy || voice.listening) return;
+    if (!db || !member || busy || voice.listening || working) return;
     const form = event.currentTarget;
     const fields = new FormData(form);
     const task = String(fields.get("task")).trim();
@@ -106,7 +146,7 @@ export default function AiTasks() {
     try {
       const pictures = await preparePictures(files);
       const payload = {
-        p_task: task, p_category: String(fields.get("category")), p_sources: { links, pictures },
+        p_task: task, p_category: String(fields.get("category")), p_sources: { links, pictures, voice_chat: true },
       };
       const response = replyTo
         ? await db.rpc("ai_reply", { ...payload, p_parent: replyTo.id })
@@ -116,12 +156,14 @@ export default function AiTasks() {
         return;
       }
       setJobs((current) => current.some((job) => job.id === response.data) ? current : [
-        { id: response.data, task, status: "queued", worker: null, result: null }, ...current,
+        { id: response.data, parent_id: replyTo?.id ?? null, task, status: "queued", worker: null, result: null }, ...current,
       ]);
+      submitted.current = response.data;
+      setLatestId(response.data);
       form.reset();
       setTaskText("");
-      setReplyTo(null);
-      setMessage("Task queued.");
+      setMessage("");
+      window.requestAnimationFrame(() => composer.current?.scrollIntoView({ block: "center", behavior: "smooth" }));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to read the attachments.");
     } finally {
@@ -138,10 +180,11 @@ export default function AiTasks() {
             voice.cancelVoice();
             const response = await db?.auth.signOut();
             if (response?.error) { setMessage("Could not sign out. Please try again."); return; }
-            setJobs([]); setAccess(null); setMessage(""); setTaskText(""); setReplyTo(null);
+            submitted.current = null;
+            setJobs([]); setAccess(null); setMessage(""); setTaskText(""); setLatestId(undefined);
           }}>Sign out</button>}
         </header>
-        <p role="status" className="text-cyan-200">{message}</p>
+        {!member && <p role="status" className="text-cyan-200">{message}</p>}
         {!db && <p>AI Tasks is being set up.</p>}
         {db && !ready && <p>Checking sign-in…</p>}
         {db && ready && !user && (
@@ -155,11 +198,62 @@ export default function AiTasks() {
         {user && (!accessChecked ? <p>Checking your invitation…</p> : !member && <p>An AI Tasks invitation is required.</p>)}
         {user && member && (
           <>
+            <div className="flex flex-wrap justify-between gap-2">
+              <button type="button" className="min-h-11 px-3 underline" disabled={busy} onClick={() => {
+                voice.cancelVoice();
+                submitted.current = null;
+                setLatestId(null);
+                setTaskText("");
+                setMessage("");
+              }}>New chat</button>
+              <details className="max-w-full rounded-lg border border-slate-700 px-3">
+                <summary className="min-h-11 cursor-pointer py-2">Voice settings</summary>
+                <div className="space-y-3 pb-3">
+                  <label className="block">Voice
+                    <select className={field} value={voice.voices.some((v) => v.voiceURI === voiceId) ? voiceId : ""} onChange={(event) => {
+                      const selected = event.target.value;
+                      setVoiceId(selected);
+                      try { localStorage.setItem(voicePreference, selected); } catch {}
+                    }}>
+                      <option value="">Device default</option>
+                      {voice.voices.map((v) => <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</option>)}
+                    </select>
+                  </label>
+                  <button type="button" className={button + " min-h-11"} disabled={listening} onClick={() => {
+                    if (voice.speaking === "sample") voice.stopSpeaking();
+                    else voice.speak("sample", "Hi! What would you like to work on today?", voiceId);
+                  }}>{voice.speaking === "sample" ? "Stop sample" : "Play sample"}</button>
+                  <label className="flex min-h-11 items-center gap-2">
+                    <input type="checkbox" checked={autoplay} onChange={(event) => {
+                      const enabled = event.target.checked;
+                      setAutoplay(enabled);
+                      try { localStorage.setItem(autoplayPreference, String(enabled)); } catch {}
+                      if (enabled && !listening) voice.speak("sample", "I’ll read my replies out loud.", voiceId);
+                    }} />
+                    Speak replies automatically
+                  </label>
+                </div>
+              </details>
+            </div>
+            <section className="space-y-4" aria-label="Conversation">
+              {thread.map((job) => <article key={job.id} className="space-y-2">
+                <p className="ml-8 rounded-2xl bg-cyan-950 p-4 whitespace-pre-wrap break-words"><strong>You</strong><br />{job.task}</p>
+                <div className="mr-8 space-y-2 rounded-2xl border border-slate-700 bg-slate-900 p-4">
+                  <p className="font-semibold">HQ</p>
+                  {job.result && <p className="whitespace-pre-wrap break-words">{job.result}</p>}
+                  {(job.status === "queued" || job.status === "running") && <p role="status">Working on it…</p>}
+                  {job.status === "failed" && !job.result && <p>That task couldn’t finish.</p>}
+                  {job.status === "completed" && job.result && <button type="button" className={button + " min-h-11"} disabled={listening} onClick={() => {
+                    if (voice.speaking === job.id) voice.stopSpeaking();
+                    else voice.speak(job.id, job.result!, voiceId);
+                  }}>{voice.speaking === job.id ? "Stop reading" : "Read aloud"}</button>}
+                  {job.ai_images && <MediaResult artifact={job.ai_images} kind="image" />}
+                  {job.ai_videos && <MediaResult artifact={job.ai_videos} kind="video" />}
+                </div>
+              </article>)}
+            </section>
             <form className="space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-4 sm:p-6" onSubmit={submit}>
-              {replyTo && <div className="flex items-center justify-between gap-3 rounded-lg bg-slate-800 p-3">
-                <p className="min-w-0 truncate">Replying to: {replyTo.task}</p>
-                <button type="button" className="min-h-11 shrink-0 px-2 underline" onClick={() => setReplyTo(null)}>Cancel reply</button>
-              </div>}
+              <p role="status" className="text-cyan-200 empty:hidden">{message}</p>
               <button type="button" aria-pressed={voice.listening} aria-describedby="voice-note"
                 className={button + " min-h-16 w-full text-xl"} onClick={voice.toggleTalk} disabled={busy}>
                 {voice.listening ? "Done talking" : "Talk to HQ"}
@@ -170,7 +264,7 @@ export default function AiTasks() {
                 <textarea ref={composer} className={field} name="task" rows={3} minLength={3} maxLength={12000}
                   value={taskText} onChange={(event) => setTaskText(event.target.value)} required />
               </label>
-              <button className={button + " min-h-12 w-full"} disabled={busy || voice.listening}>Send</button>
+              <button className={button + " min-h-12 w-full"} disabled={busy || voice.listening || working}>Send</button>
               <details className="space-y-3">
                 <summary className="min-h-11 cursor-pointer py-2 text-slate-200">Attachments and inbox</summary>
                 <p className="text-sm text-slate-300">Start with “Create an image of…” or “Create a video of…” to generate media. Videos are short and silent.</p>
@@ -184,26 +278,20 @@ export default function AiTasks() {
                 </select></label>
               </details>
             </form>
-            <section className="space-y-3">
-              <h2 className="text-xl font-semibold">Your jobs</h2>
+            <details className="space-y-3">
+              <summary className="min-h-11 cursor-pointer py-2 text-lg">Task history</summary>
               {!jobs.length && <p>No tasks yet.</p>}
-              {jobs.map((job) => <article key={job.id} className="space-y-2 rounded-lg border border-slate-700 p-4">
-                <p className="break-words font-semibold">{job.task}</p>
-                <p className="text-sm text-slate-300">{job.worker ? job.worker + " · " : ""}{job.status}</p>
-                {job.result && <p className="whitespace-pre-wrap break-words">{job.result}</p>}
-                {job.status === "completed" && job.result && <div className="flex flex-wrap gap-2">
-                  <button type="button" className={button + " min-h-11"} onClick={() => voice.toggleSpeak(job.result!)}>
-                    {voice.speaking ? "Stop reading" : "Read aloud"}
-                  </button>
-                  <button type="button" className="min-h-11 px-3 underline" onClick={() => {
-                    setReplyTo(job);
-                    composer.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-                  }}>Reply</button>
-                </div>}
-                {job.ai_images && <MediaResult artifact={job.ai_images} kind="image" />}
-                {job.ai_videos && <MediaResult artifact={job.ai_videos} kind="video" />}
-              </article>)}
-            </section>
+              {jobs.map((job) => <button type="button" key={job.id} disabled={busy}
+                className="block min-h-12 w-full rounded-lg border border-slate-700 p-3 text-left"
+                onClick={() => {
+                  voice.cancelVoice();
+                  setLatestId(job.id);
+                  composer.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+                }}>
+                <span className="block truncate">{job.task}</span>
+                <span className="text-sm text-slate-300">{job.worker ? job.worker + " · " : ""}{job.status}</span>
+              </button>)}
+            </details>
           </>
         )}
       </div>
