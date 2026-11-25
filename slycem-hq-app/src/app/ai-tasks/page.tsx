@@ -35,11 +35,14 @@ export default function AiTasks() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [taskText, setTaskText] = useState("");
+  const [attachments, setAttachments] = useState<File[]>([]);
   const [latestId, setLatestId] = useState<string | null | undefined>(undefined);
   const [voiceId, setVoiceId] = useState("");
   const [autoplay, setAutoplay] = useState(false);
   const submitted = useRef<string | null>(null);
   const composer = useRef<HTMLTextAreaElement | null>(null);
+  const mediaInput = useRef<HTMLInputElement | null>(null);
+  const conversation = useRef<HTMLElement | null>(null);
   const voice = useVoice(
     (text) => setTaskText((current) => (current.trim() ? current.trimEnd() + " " + text : text).slice(0, 12000)),
     setMessage,
@@ -136,7 +139,7 @@ export default function AiTasks() {
     const fields = new FormData(form);
     const task = String(fields.get("task")).trim();
     const links = String(fields.get("links")).split(/\r?\n/).map((link) => link.trim()).filter(Boolean);
-    const files = fields.getAll("media").filter((file): file is File => file instanceof File && file.size > 0);
+    const files = attachments;
     if (task.length < 3 || links.length > 3) {
       setMessage("Enter a task and up to three links.");
       return;
@@ -162,14 +165,19 @@ export default function AiTasks() {
       setLatestId(response.data);
       form.reset();
       setTaskText("");
+      setAttachments([]);
       setMessage("");
-      window.requestAnimationFrame(() => composer.current?.scrollIntoView({ block: "center", behavior: "smooth" }));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to read the attachments.");
     } finally {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    const view = conversation.current;
+    if (view) view.scrollTop = view.scrollHeight;
+  }, [latest?.id, latest?.status]);
 
   return (
     <main className="min-h-screen bg-slate-950 px-5 py-10 text-slate-100">
@@ -181,7 +189,7 @@ export default function AiTasks() {
             const response = await db?.auth.signOut();
             if (response?.error) { setMessage("Could not sign out. Please try again."); return; }
             submitted.current = null;
-            setJobs([]); setAccess(null); setMessage(""); setTaskText(""); setLatestId(undefined);
+            setJobs([]); setAccess(null); setMessage(""); setTaskText(""); setAttachments([]); setLatestId(undefined);
           }}>Sign out</button>}
         </header>
         {!member && <p role="status" className="text-cyan-200">{message}</p>}
@@ -204,6 +212,7 @@ export default function AiTasks() {
                 submitted.current = null;
                 setLatestId(null);
                 setTaskText("");
+                setAttachments([]);
                 setMessage("");
               }}>New chat</button>
               <details className="max-w-full rounded-lg border border-slate-700 px-3">
@@ -235,7 +244,46 @@ export default function AiTasks() {
                 </div>
               </details>
             </div>
-            <section className="space-y-4" aria-label="Conversation">
+            <form className="space-y-3 rounded-2xl border border-slate-700 bg-slate-900 p-4 sm:p-5" onSubmit={submit}>
+              <p role="status" className="text-cyan-200 empty:hidden">{message}</p>
+              {voice.preview && <p className="rounded-lg bg-slate-800 p-3">{voice.preview}</p>}
+              <label className="block text-base font-medium">Your message
+                <textarea ref={composer} className={field + " mt-1 block"} name="task" rows={3} minLength={3} maxLength={12000}
+                  placeholder="Type a message or tap Talk to HQ"
+                  value={taskText} onChange={(event) => setTaskText(event.target.value)} required />
+              </label>
+              <input ref={mediaInput} type="file" accept="image/*,video/*" multiple hidden onChange={(event) => {
+                const chosen = Array.from(event.currentTarget.files ?? []);
+                setAttachments((current) => [...current, ...chosen]);
+                event.currentTarget.value = "";
+              }} />
+              {attachments.length > 0 && <ul aria-label="Selected attachments" className="flex flex-wrap gap-2">
+                {attachments.map((file, index) => <li key={index} className="flex max-w-full items-center gap-2 rounded-lg bg-slate-800 pl-3">
+                  <span className="min-w-0 truncate">{file.name}</span>
+                  <button type="button" className="min-h-11 shrink-0 px-3 text-lg" aria-label={`Remove ${file.name}`}
+                    disabled={busy} onClick={() => setAttachments((current) => current.filter((_, position) => position !== index))}>×</button>
+                </li>)}
+              </ul>}
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="min-h-12 rounded-lg border border-slate-500 px-4 font-semibold disabled:opacity-60"
+                  disabled={busy} onClick={() => mediaInput.current?.click()}>Attach images or videos</button>
+                <button type="button" aria-pressed={voice.listening} aria-describedby="voice-note"
+                  className="min-h-12 rounded-lg border border-cyan-300 px-4 font-semibold text-cyan-100 disabled:opacity-60"
+                  onClick={voice.toggleTalk} disabled={busy}>{voice.listening ? "Done talking" : "Talk to HQ"}</button>
+                <button className={button + " ml-auto min-h-12"} disabled={busy || voice.listening || working}>Send</button>
+              </div>
+              <p id="voice-note" className="sr-only">Your device or browser turns speech into text for you to review before sending.</p>
+              <details className="space-y-3">
+                <summary className="min-h-11 cursor-pointer py-2 text-slate-200">Links and inbox</summary>
+                <label className="block">Public links (up to three, one per line)<textarea className={field} name="links" rows={2} /></label>
+                <label className="block">Inbox<select className={field} name="category" defaultValue="auto">
+                  <option value="auto">Choose automatically</option>
+                  <option value="content">Content</option><option value="business">Business</option>
+                  <option value="education">Education</option><option value="personal">Personal</option>
+                </select></label>
+              </details>
+            </form>
+            <section ref={conversation} className="max-h-[55vh] space-y-4 overflow-y-auto pr-1" aria-label="Conversation" tabIndex={0}>
               {thread.map((job) => <article key={job.id} className="space-y-2">
                 <p className="ml-8 rounded-2xl bg-cyan-950 p-4 whitespace-pre-wrap break-words"><strong>You</strong><br />{job.task}</p>
                 <div className="mr-8 space-y-2 rounded-2xl border border-slate-700 bg-slate-900 p-4">
@@ -252,32 +300,6 @@ export default function AiTasks() {
                 </div>
               </article>)}
             </section>
-            <form className="space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-4 sm:p-6" onSubmit={submit}>
-              <p role="status" className="text-cyan-200 empty:hidden">{message}</p>
-              <button type="button" aria-pressed={voice.listening} aria-describedby="voice-note"
-                className={button + " min-h-16 w-full text-xl"} onClick={voice.toggleTalk} disabled={busy}>
-                {voice.listening ? "Done talking" : "Talk to HQ"}
-              </button>
-              <p id="voice-note" className="text-sm text-slate-300">Your device or browser turns speech into text. Tap Send when the message looks right.</p>
-              {voice.preview && <p className="rounded-lg bg-slate-800 p-3">{voice.preview}</p>}
-              <label className="block text-base">Your message
-                <textarea ref={composer} className={field} name="task" rows={3} minLength={3} maxLength={12000}
-                  value={taskText} onChange={(event) => setTaskText(event.target.value)} required />
-              </label>
-              <button className={button + " min-h-12 w-full"} disabled={busy || voice.listening || working}>Send</button>
-              <details className="space-y-3">
-                <summary className="min-h-11 cursor-pointer py-2 text-slate-200">Attachments and inbox</summary>
-                <p className="text-sm text-slate-300">Start with “Create an image of…” or “Create a video of…” to generate media. Videos are short and silent.</p>
-                <label className="block">Pictures or videos<input className={field} type="file" name="media" accept="image/*,video/*" multiple /></label>
-                <p className="text-sm text-slate-300">HQ reads pictures and samples four frames per video. Video audio is unavailable.</p>
-                <label className="block">Public links (up to three, one per line)<textarea className={field} name="links" rows={2} /></label>
-                <label className="block">Inbox<select className={field} name="category" defaultValue="auto">
-                  <option value="auto">Choose automatically</option>
-                  <option value="content">Content</option><option value="business">Business</option>
-                  <option value="education">Education</option><option value="personal">Personal</option>
-                </select></label>
-              </details>
-            </form>
             <details className="space-y-3">
               <summary className="min-h-11 cursor-pointer py-2 text-lg">Task history</summary>
               {!jobs.length && <p>No tasks yet.</p>}
