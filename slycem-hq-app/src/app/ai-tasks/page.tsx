@@ -17,6 +17,7 @@ type Job = {
   worker: string | null;
   result: string | null;
   ai_images?: { path: string } | { path: string }[] | null;
+  ai_videos?: { path: string } | { path: string }[] | null;
 };
 
 const field = "w-full rounded-lg border border-slate-600 bg-slate-950 p-3 text-white";
@@ -56,7 +57,7 @@ export default function AiTasks() {
         if (membership.error) setMessage("Could not check your invitation. Please try again.");
         return;
       }
-      const response = await client.from("ai_jobs").select("id,task,status,worker,result,ai_images(path)")
+      const response = await client.from("ai_jobs").select("id,task,status,worker,result,ai_images(path),ai_videos(path)")
         .order("created_at", { ascending: false }).limit(30);
       if (active) {
         setJobs(response.data ?? []);
@@ -141,7 +142,7 @@ export default function AiTasks() {
           <>
             <form className="space-y-4" onSubmit={submit}>
               <label className="block">What should HQ work on?<textarea className={field} name="task" rows={4} minLength={3} maxLength={12000} required /></label>
-              <p className="text-sm text-slate-300">For a new image, start with “Create an image of…” and describe what you want.</p>
+              <p className="text-sm text-slate-300">Start with “Create an image of…” or “Create a video of…” to generate media. Videos are short and silent.</p>
               <label className="block">Pictures or videos<input className={field} type="file" name="media" accept="image/*,video/*" multiple /></label>
               <p className="text-sm text-slate-300">HQ reads pictures and samples four frames per video. Video audio is unavailable.</p>
               <label className="block">Public links (up to three, one per line)<textarea className={field} name="links" rows={2} /></label>
@@ -159,7 +160,8 @@ export default function AiTasks() {
                 <p className="break-words font-semibold">{job.task}</p>
                 <p className="text-sm text-slate-300">{job.worker ? job.worker + " · " : ""}{job.status}</p>
                 {job.result && <p className="whitespace-pre-wrap break-words">{job.result}</p>}
-                {job.ai_images && <ImageResult image={job.ai_images} />}
+                {job.ai_images && <MediaResult artifact={job.ai_images} kind="image" />}
+                {job.ai_videos && <MediaResult artifact={job.ai_videos} kind="video" />}
               </article>)}
             </section>
           </>
@@ -170,8 +172,8 @@ export default function AiTasks() {
   );
 }
 
-function ImageResult({ image }: { image: NonNullable<Job["ai_images"]> }) {
-  const path = Array.isArray(image) ? image[0]?.path : image.path;
+function MediaResult({ artifact, kind }: { artifact: NonNullable<Job["ai_images"]>; kind: "image" | "video" }) {
+  const path = Array.isArray(artifact) ? artifact[0]?.path : artifact.path;
   const [imageUrl, setImageUrl] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -180,10 +182,13 @@ function ImageResult({ image }: { image: NonNullable<Job["ai_images"]> }) {
   if (!path || !db) return null;
   if (imageUrl) return (
     <figure className="space-y-2">
-      {/* The browser owns this private blob URL. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img className="rounded-lg" src={imageUrl} alt="AI-generated result" />
-      <a className="underline" href={imageUrl} download="slycem-hq-image.png">Download image</a>
+      {kind === "video" ? (
+        <video className="w-full rounded-lg" src={imageUrl} controls playsInline muted aria-label="AI-generated silent video" />
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img className="rounded-lg" src={imageUrl} alt="AI-generated result" />
+      )}
+      <a className="underline" href={imageUrl} download={kind === "video" ? "slycem-hq-video.mp4" : "slycem-hq-image.png"}>Download {kind}</a>
     </figure>
   );
   return (
@@ -193,15 +198,15 @@ function ImageResult({ image }: { image: NonNullable<Job["ai_images"]> }) {
         setLoading(true);
         setError("");
         try {
-          const response = await db.storage.from("ai-task-images").download(path);
+          const response = await db.storage.from(kind === "video" ? "ai-task-videos" : "ai-task-images").download(path);
           if (response.error) throw response.error;
           setImageUrl(URL.createObjectURL(response.data));
         } catch {
-          setError("Could not open this image. Try again.");
+          setError("Could not open this " + kind + ". Try again.");
         } finally {
           setLoading(false);
         }
-      }}>{loading ? "Loading image…" : "View generated image"}</button>
+      }}>{loading ? "Loading " + kind + "…" : "View generated " + kind}</button>
       {error && <p role="status">{error}</p>}
     </>
   );
